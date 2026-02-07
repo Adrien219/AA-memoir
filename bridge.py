@@ -2,8 +2,9 @@ import serial
 import json
 
 class ArduinoBridge:
-    def __init__(self, port='COM4', baudrate=9600):
+    def __init__(self, port='/dev/ttyUSB1', baudrate=9600):
         try:
+            # La ligne doit être BIEN ALIGNÉE sous le try
             self.ser = serial.Serial(port, baudrate, timeout=0.1)
             print(f"✅ Arduino connecté sur {port}")
         except Exception as e:
