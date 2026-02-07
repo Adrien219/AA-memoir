@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pi Performance Monitor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { font-family: 'monospace'; background: #000; color: #0f0; padding: 20px; }
+        .perf-box { border: 1px solid #0f0; padding: 10px; margin-bottom: 20px; background: #020; }
+        .sensor-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+        .card { border: 1px solid #444; padding: 10px; text-align: center; }
+        .bar-container { background: #222; width: 100%; height: 20px; }
+        .bar { background: #0f0; height: 100%; width: 0%; transition: 0.3s; }
+    </style>
+</head>
+<body>
+    <h1>RASPBERRY PI - PERFORMANCE BENCHMARK</h1>
+    
+    <div class="perf-box">
+        <h3>📊 METRIQUES SYSTEME (PI)</h3>
+        CPU: <span id="cpu_val">0</span>% <div class="bar-container"><div id="cpu_bar" class="bar"></div></div>
+        RAM: <span id="ram_val">0</span>% <div class="bar-container"><div id="ram_bar" class="bar"></div></div>
+        TEMP PI: <span id="pi_temp">0</span>°C
+    </div>
+
+    <h3>📡 CAPTEURS CASQUE (ARDUINO)</h3>
+    <div class="sensor-grid">
+        <div class="card">DIST: <span id="dist">--</span> cm</div>
+        <div class="card">GAZ: <span id="gas">--</span></div>
+        <div class="card">LIGHT: <span id="light">--</span></div>
+    </div>
+
+    <script>
+        var socket = io();
+        socket.on('system_update', function(data) {
+            // Update Perf
+            document.getElementById('cpu_val').innerText = data.cpu;
+            document.getElementById('cpu_bar').style.width = data.cpu + "%";
+            document.getElementById('ram_val').innerText = data.ram;
+            document.getElementById('ram_bar').style.width = data.ram + "%";
+            document.getElementById('pi_temp').innerText = data.pi_temp;
+
+            // Update Sensors
+            document.getElementById('dist').innerText = data.dist;
+            document.getElementById('gas').innerText = data.gas;
+            document.getElementById('light').innerText = data.light;
+        });
+    </script>
+</body>
+</html>

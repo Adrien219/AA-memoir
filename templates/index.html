@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>SMART-GLASSES | MISSION CONTROL</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        :root { --neon: #00f2ff; --warn: #ff0055; --bg: #050505; }
+        body { background: var(--bg); color: var(--neon); font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 10px; font-size: 13px; }
+        .wrapper { display: grid; grid-template-columns: 1fr 350px; gap: 15px; height: 97vh; }
+        .vision-container { position: relative; border: 2px solid var(--neon); border-radius: 10px; overflow: hidden; box-shadow: 0 0 15px rgba(0,242,255,0.2); }
+        .vision-container img { width: 100%; height: 100%; object-fit: cover; }
+        .overlay-text { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-left: 3px solid var(--neon); }
+        .sidebar { overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .card { background: rgba(255,255,255,0.05); border: 1px solid rgba(0,242,255,0.2); padding: 12px; border-radius: 8px; }
+        .card-title { font-weight: bold; font-size: 10px; text-transform: uppercase; border-bottom: 1px solid rgba(0,242,255,0.2); margin-bottom: 8px; padding-bottom: 4px; color: rgba(0,242,255,0.6); }
+        .data-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
+        .val { color: #fff; font-family: monospace; font-size: 1.1em; }
+        .tag { background: var(--neon); color: #000; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 10px; margin: 2px; display: inline-block; }
+        .danger { color: var(--warn) !important; animation: blink 0.8s infinite; }
+        @keyframes blink { 50% { opacity: 0.3; } }
+        .joystick-map { height: 60px; width: 60px; border: 1px solid var(--neon); position: relative; margin: 10px auto; border-radius: 50%; }
+        .joy-dot { position: absolute; width: 8px; height: 8px; background: #fff; border-radius: 50%; transition: 0.1s; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="vision-container">
+            <img src="/video_feed">
+            <div class="overlay-text">HUD_SYSTEM_V3 // <span id="rtc-time">00:00:00</span></div>
+            <div id="ai-tags" style="position: absolute; bottom: 15px; left: 15px;"></div>
+        </div>
+
+        <div class="sidebar">
+            <div class="card">
+                <div class="card-title">Intelligence Artificielle</div>
+                <div class="data-row"><span>Latence:</span> <span id="lat" class="val">0</span> ms</div>
+                <div class="data-row"><span>Précision:</span> <span id="acc" class="val">0</span> %</div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Hardware Machine (<span id="os-name">OS</span>)</div>
+                <div class="data-row"><span>Charge CPU:</span> <span id="cpu" class="val">0</span> %</div>
+                <div class="data-row"><span>Mémoire RAM:</span> <span id="ram" class="val">0</span> %</div>
+                <div class="data-row"><span>Température Pi:</span> <span id="temp-pi" class="val">0</span> °C</div>
+                <div class="data-row"><span>Stockage Disque:</span> <span id="disk" class="val">0</span> %</div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Environnement Extérieur</div>
+                <div class="data-row"><span>Distance Objet:</span> <span id="dist" class="val">0</span> cm</div>
+                <div class="data-row"><span>Toxicité Gaz:</span> <span id="gas" class="val">0</span></div>
+                <div class="data-row"><span>Luminosité:</span> <span id="lum" class="val">--</span></div>
+                <div class="data-row"><span>Température:</span> <span id="temp-ext" class="val">0</span> °C</div>
+                <div class="data-row"><span>Humidité:</span> <span id="hum" class="val">0</span> %</div>
+                <div class="data-row"><span>Niveau Sonore:</span> <span id="son" class="val">0</span></div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Contrôles & Entrées</div>
+                <div class="data-row"><span>Obstacle IR:</span> <span id="obs" class="val">RAS</span></div>
+                <div class="data-row"><span>Bouton Joy:</span> <span id="btn" class="val">OFF</span></div>
+                <div class="joystick-map"><div id="jdot" class="joy-dot" style="top:26px; left:26px;"></div></div>
+            </div>
+
+            <div class="card" style="border-color: var(--warn);">
+                <div class="card-title">Gestion Énergie</div>
+                <div class="data-row"><span>Batterie:</span> <span id="bat" class="val">0</span> %</div>
+            </div>
+        </div>
+    </div>
+
+  // Remplace toute la balise <script> 
+
+    // On force l'utilisation des WebSockets pour éviter les timeouts HTTP
+ // Dans ton index.html, remplace la configuration du socket :
+var socket = io({
+    transports: ['polling', 'websocket'], // On autorise le polling en secours
+    upgrade: true,
+    reconnection: true,
+    reconnectionAttempts: 10,
+    timeout: 10000
+});
+
+socket.on('connect', function() {
+    console.log("✅ Connexion stable établie !");
+});
+    socket.on('full_system_update', function(data) {
+        // IA
+        document.getElementById('lat').innerText = data.perf_ia.latence;
+        document.getElementById('acc').innerText = data.perf_ia.precision;
+        
+        // SYSTEM
+        document.getElementById('cpu').innerText = data.perf_sys.cpu_usage;
+        document.getElementById('ram').innerText = data.perf_sys.ram_usage;
+        document.getElementById('temp-pi').innerText = data.perf_sys.pi_temp;
+        document.getElementById('disk').innerText = data.perf_sys.disk_usage;
+        document.getElementById('os-name').innerText = data.perf_sys.os;
+
+        // CAPTEURS
+        const s = data.sensors;
+        document.getElementById('dist').innerText = s.dist || 0;
+        document.getElementById('gas').innerText = s.gas || 0;
+        document.getElementById('temp-ext').innerText = s.temp_ext || 0;
+        document.getElementById('hum').innerText = s.hum || 0;
+        document.getElementById('son').innerText = s.son || 0;
+        document.getElementById('rtc-time').innerText = s.time || "00:00";
+        
+        // LUMIÈRE
+        if(s.lum !== undefined) {
+            document.getElementById('lum').innerText = s.lum == 1 ? "SOMBRE" : "LUMINEUX";
+            document.getElementById('lum').style.color = s.lum == 1 ? "#ff0055" : "#00f2ff";
+        }
+
+        // TAGS IA
+        const tagContainer = document.getElementById('ai-tags');
+        tagContainer.innerHTML = "";
+        data.perf_ia.objects.forEach(obj => { 
+            tagContainer.innerHTML += `<span class="tag">${obj}</span>`; 
+        });
+    });
+
+    socket.on('connect_error', function(err) {
+        console.log("Tentative de reconnexion...");
+    });
+</script>
+</body>
+</html>
