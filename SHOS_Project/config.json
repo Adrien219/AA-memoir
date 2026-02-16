@@ -1,0 +1,49 @@
+{
+    "available_modules": {
+        "vision_objet": {
+            "name": "Vision IA (YOLO)",
+            "mqtt_topic": "helmet/plugins/vision",
+            "type": "ia_overlay"
+        },
+        "danger_monitor": {
+            "name": "Moniteur de Danger",
+            "mqtt_topic": "helmet/plugins/danger",
+            "type": "security"
+        },
+        "voice_assistant": {
+            "name": "Assistant Vocal",
+            "mqtt_topic": "helmet/plugins/voice",
+            "type": "audio"
+        }
+    },
+    "profiles": {
+        "gardien": {
+            "name": "GARDIEN S\u00c9CURIT\u00c9",
+            "main_module": "danger_monitor",
+            "secondary_modules": [
+                "voice_assistant"
+            ],
+            "active": true
+        },
+        "explorateur": {
+            "name": "EXPLORATEUR ASSIST\u00c9",
+            "main_module": "vision_objet",
+            "secondary_modules": [
+                "voice_assistant",
+                "danger_monitor"
+            ],
+            "active": true
+        },
+        "profile_1771201376": {
+            "name": "aveugle1",
+            "main_module": "vision_objet",
+            "secondary_modules": [
+                "vision_objet",
+                "danger_monitor",
+                "voice_assistant"
+            ],
+            "active": true
+        }
+    },
+    "current_active_profile": "explorateur"
+}

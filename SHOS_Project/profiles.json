@@ -1,0 +1,12 @@
+{
+  "navigation": {
+    "name": "Navigation Urbaine",
+    "plugins": ["vision_objet", "voice_assistant"],
+    "color": "lime"
+  },
+  "mine": {
+    "name": "Assistance Mine",
+    "plugins": ["danger_monitor", "voice_assistant"],
+    "color": "orange"
+  }
+}

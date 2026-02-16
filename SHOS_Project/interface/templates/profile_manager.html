@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>S.H.O.S - PROFILE MANAGER</title>
+    <style>
+        body { background: #050505; color: #36f6ff; font-family: monospace; padding: 50px; }
+        .form-group { margin-bottom: 25px; border-left: 3px solid #36f6ff; padding-left: 15px; }
+        input, select { background: #111; border: 1px solid #36f6ff; color: #36f6ff; padding: 10px; width: 300px; }
+        .module-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 400px; }
+        button { background: #36f6ff; color: #000; border: none; padding: 15px 30px; cursor: pointer; font-weight: bold; margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>[ NEW PROFILE CREATION ]</h1>
+
+    <div class="form-group">
+        <label>PROFILE NAME:</label><br>
+        <input type="text" id="p-name" placeholder="EX: COMBAT_UNIT_01">
+    </div>
+
+    <div class="form-group">
+        <label>MAIN MODULE (Primary View):</label><br>
+        <select id="p-main">
+            {% for id, mod in modules.items() %}
+            <option value="{{ id }}">{{ mod.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label>SECONDARY MODULES (Widgets):</label><br>
+        <div class="module-list">
+            {% for id, mod in modules.items() %}
+            <div>
+                <input type="checkbox" class="sec-mod" value="{{ id }}" style="width: auto;"> {{ mod.name }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <button onclick="saveProfile()">COMPILE & SAVE PROFILE</button>
+
+    <script>
+        function saveProfile() {
+            const name = document.getElementById('p-name').value;
+            const main = document.getElementById('p-main').value;
+            const secondary = Array.from(document.querySelectorAll('.sec-mod:checked')).map(cb => cb.value);
+
+            if(!name) return alert("Veuillez donner un nom !");
+
+            fetch('/save_profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: name, main_module: main, secondary_modules: secondary})
+            }).then(() => {
+                alert("Profil enregistré !");
+                window.location.href = "/";
+            });
+        }
+    </script>
+</body>
+</html>

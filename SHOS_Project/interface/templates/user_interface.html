@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>S.H.O.S - HUD OPERATIONNEL</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root { --main-cyan: #36f6ff; --danger-red: #ff3636; }
+        body { 
+            background: #000; color: var(--main-cyan); 
+            font-family: 'Courier New', monospace; margin: 0; overflow: hidden; 
+        }
+        #hud-container { width: 100vw; height: 100vh; position: relative; border: 2px solid var(--main-cyan); }
+        
+        /* Vidéo en arrière-plan */
+        #video-bg { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            object-fit: cover; z-index: -1; opacity: 0.6;
+        }
+
+        /* Widgets */
+        .widget { 
+            position: absolute; background: rgba(0, 20, 20, 0.8); 
+            padding: 15px; border: 1px solid var(--main-cyan); border-radius: 5px;
+        }
+        #telemetry { top: 20px; left: 20px; width: 200px; }
+        #system { top: 20px; right: 20px; width: 180px; text-align: right; }
+        #status-bar { bottom: 0; width: 100%; background: var(--main-cyan); color: #000; padding: 5px; font-weight: bold; }
+
+        .val { font-size: 1.5em; display: block; }
+        .alert { color: var(--danger-red); border-color: var(--danger-red); animation: blink 0.5s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.2; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div id="hud-container">
+        <img id="video-bg" src="{{ url_for('video_feed') }}" alt="NO VIDEO SIGNAL">
+
+        <div id="telemetry" class="widget">
+            <small>PROXIMITÉ</small>
+            <span class="val" id="dist">-- CM</span>
+            <hr>
+            <small>AIR / GAZ</small>
+            <span class="val" id="gas">--</span>
+            <small>TEMP: </small><span id="temp">--</span>°C
+        </div>
+
+        <div id="system" class="widget">
+            <small>CPU</small> <span id="cpu">0</span>%<br>
+            <small>RAM</small> <span id="ram">0</span>%<br>
+            <small>TEMP</small> <span id="rpi-temp">0</span>°C
+        </div>
+
+        <div id="status-bar">
+            S.H.O.S HUD SYSTEM | PROFILE: {{ profile.name }} | <span id="socket-status">DECONNECTÉ</span>
+        </div>
+    </div>
+
+    <script>
+        // Connexion au serveur Flask via Socket.IO
+        const socket = io();
+        const statusDisplay = document.getElementById('socket-status');
+
+        socket.on('connect', () => {
+            statusDisplay.innerText = "CONNECTÉ";
+            statusDisplay.style.color = "green";
+            console.log("Connecté au serveur S.H.O.S");
+        });
+
+        // RÉCEPTION DES DONNÉES ARDUINO
+        socket.on('sensor_update', (data) => {
+            console.log("Données reçues:", data); // Pour vérifier dans la console F12
+            
+            // Distance
+            const distBox = document.getElementById('telemetry');
+            if(data.dist === null) {
+                document.getElementById('dist').innerText = "HORS PORTÉE";
+            } else {
+                document.getElementById('dist').innerText = Math.round(data.dist) + " CM";
+                if(data.dist < 30) distBox.classList.add('alert');
+                else distBox.classList.remove('alert');
+            }
+
+            // Gaz
+            document.getElementById('gas').innerText = data.gas;
+            if(data.gas > 400) document.getElementById('gas').classList.add('alert');
+            else document.getElementById('gas').classList.remove('alert');
+
+            // Température
+            document.getElementById('temp').innerText = data.temp_ext || "--";
+        });
+
+        // RÉCEPTION DES DONNÉES SYSTÈME
+        socket.on('sys_update', (data) => {
+            document.getElementById('cpu').innerText = data.cpu;
+            document.getElementById('ram').innerText = data.ram;
+            document.getElementById('rpi-temp').innerText = data.temp;
+        });
+
+        socket.on('disconnect', () => {
+            statusDisplay.innerText = "LIAISON PERDUE";
+            statusDisplay.style.color = "red";
+        });
+    </script>
+</body>
+</html>

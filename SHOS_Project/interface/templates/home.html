@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>S.H.O.S - LOGIN</title>
+    <style>
+        body { background: #050505; color: #36f6ff; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+        h1 { letter-spacing: 5px; text-shadow: 0 0 10px #36f6ff; margin-bottom: 50px; }
+        .profile-container { display: flex; gap: 30px; }
+        .profile-card { border: 1px solid #36f6ff; padding: 30px; width: 220px; cursor: pointer; text-align: center; transition: all 0.4s ease; background: rgba(54, 246, 255, 0.05); position: relative; }
+        .profile-card:hover { background: #36f6ff; color: #000; box-shadow: 0 0 30px #36f6ff; transform: translateY(-10px); }
+        .profile-card h2 { margin: 10px 0; font-size: 1.2rem; }
+        .profile-card p { font-size: 0.8rem; opacity: 0.7; }
+        .btn-new { margin-top: 60px; padding: 12px 25px; border: 1px dashed #36f6ff; cursor: pointer; background: none; color: #36f6ff; font-weight: bold; transition: 0.3s; }
+        .btn-new:hover { background: rgba(54, 246, 255, 0.2); }
+    </style>
+</head>
+<body>
+    <h1>S.H.O.S SYSTEM ACCESS</h1>
+    <div class="profile-container">
+        {% for id, data in profiles.items() %}
+        <div class="profile-card" onclick="launchProfile('{{ id }}')">
+            <div style="font-size: 40px;">👤</div>
+            <h2>{{ data.name }}</h2>
+            <p>MODULE PRINCIPAL: <br><strong>{{ data.main_module }}</strong></p>
+        </div>
+        {% endfor %}
+    </div>
+    <button class="btn-new" onclick="window.location.href='/create_profile'">[+] CREATE NEW PROFILE</button>
+
+    <script>
+        function launchProfile(id) {
+            fetch('/activate/' + id).then(res => res.json()).then(data => {
+                if(data.status === "success") window.location.href = "/ui";
+            });
+        }
+    </script>
+</body>
+</html>

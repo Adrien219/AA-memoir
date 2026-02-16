@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>S.MOS SYSTEM v1.0 — SHOS HUD (Socket.IO)</title>
+
+  <!--
+    Objectif: remplacer TON interface (ancienne) par l'interface HUD "S.MOS" (la plus proche possible des images),
+    tout en gardant EXACTEMENT TA LOGIQUE de fonctionnement :
+      - Fond vidéo: <img src="/video_feed">
+      - Socket.IO: socket.on('full_system_update', data => {...})
+      - data.sensors (Arduino) + data.perf_sys (Pi)
+      - Collision => affiche danger
+
+    Remplacements demandés:
+      - Panel humanoïde => remplacé par un flux "VR" (img snapshot refresh)
+      - "2ème personnage" => remplacé par flux ESP32-CAM (img snapshot refresh)
+      - Ajout widget joystick cercle + point (interactif) + support si data.sensors.joyX / joyY existent
+      - Interface interactive: joystick draggable, pause bouton (visuel), danger animé, barres dynamiques
+
+    Références visuelles suivies:
+    - HUD complet: https://www.genspark.ai/api/files/s/hlczi2UF
+    - Bandeau haut: https://www.genspark.ai/api/files/s/0fWyx41i
+    - Colonne droite: https://www.genspark.ai/api/files/s/JxsIPuJj
+    - Bas + danger: https://www.genspark.ai/api/files/s/XVS1nR70
+    - Panel bas-gauche: https://www.genspark.ai/api/files/s/vEpDXoU5
+    - Joystick cercle: https://www.genspark.ai/api/files/s/hW6SAtnz
+  -->
+
+  <style>
+    :root{
+      --cyan:#36f6ff;
+      --cyan2:#00c7ff;
+      --cyanLine: rgba(54,246,255,.58);
+      --cyanSoft: rgba(54,246,255,.14);
+      --panel: rgba(4,18,24,.26);
+      --txt: rgba(220,255,255,.92);
+      --muted: rgba(220,255,255,.65);
+      --grid: rgba(54,246,255,.10);
+      --red:#ff2b2b;
+      --shadowCi: 0 0 28px rgba(0,199,255,.10) inset;
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; margin:0; overflow:hidden; background:#000; }
+    body{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,"Liberation Mono","Courier New", monospace; color:var(--txt); }
+
+    /* ===== STAGE / BACKGROUND (ton /video_feed conservé) ===== */
+#stage {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    background: #000;
+}
+
+#bg {
+    position: absolute;
+    inset: 0; /* Vérifie que c'est bien 'inset: 0' ou 'top:0; left:0; width:100%; height:100%;' */
+    z-index: 0;
+    overflow: hidden;
+}
+
+#bg img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* Pour que la vidéo remplisse bien l'écran */
+    display: block;
+}
+    #bg::after{
+      content:""; position:absolute; inset:-40px; pointer-events:none;
+      background:
+        repeating-linear-gradient(0deg,
+          rgba(54,246,255,.05) 0px,
+          rgba(54,246,255,.05) 1px,
+          rgba(0,0,0,0) 3px,
+          rgba(0,0,0,0) 7px
+        );
+      opacity:.34;
+      mix-blend-mode:screen;
+    }
+    #noise{
+      position:absolute; inset:0; pointer-events:none; z-index:1;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
+      opacity:.08;
+      mix-blend-mode:overlay;
+    }
+
+    /* ===== HUD ROOT ===== */
+    #hud{ position:absolute; inset:0; z-index:2; }
+    .glow{ text-shadow: 0 0 7px rgba(54,246,255,.55), 0 0 18px rgba(0,199,255,.18); }
+
+    /* ===== OUTER FRAME ===== */
+    #outer{
+      position:absolute; inset:12px;
+      border:1px solid rgba(54,246,255,.22);
+      box-shadow: var(--shadowCi);
+      pointer-events:none;
+    }
+    .corner{
+      position:absolute; width:32px; height:32px;
+      border:2px solid rgba(54,246,255,.65);
+      filter: drop-shadow(0 0 10px rgba(54,246,255,.20));
+      pointer-events:none;
+    }
+    .corner.tl{ left:12px; top:12px; border-right:none; border-bottom:none; }
+    .corner.tr{ right:12px; top:12px; border-left:none; border-bottom:none; }
+    .corner.bl{ left:12px; bottom:12px; border-right:none; border-top:none; }
+    .corner.br{ right:12px; bottom:12px; border-left:none; border-top:none; }
+
+    .ear{
+      position:absolute; top:12px; width:120px; height:34px;
+      border:1px solid rgba(54,246,255,.28);
+      background: linear-gradient(90deg, rgba(54,246,255,.12), rgba(0,0,0,0));
+      clip-path: polygon(0 0, 86% 0, 100% 55%, 86% 100%, 0 100%, 10% 50%);
+      box-shadow: 0 0 18px rgba(0,199,255,.10) inset;
+      pointer-events:none;
+      opacity:.95;
+    }
+    .ear.left{ left:84px; }
+    .ear.right{ right:84px; transform: scaleX(-1); }
+
+    #hdrLeft{
+      position:absolute; left:36px; top:16px;
+      font-size:14px; letter-spacing:.12em;
+      color: rgba(210,255,255,.86);
+    }
+    #hdrRight{
+      position:absolute; right:28px; top:14px;
+      display:flex; align-items:center; gap:10px;
+      font-size:13px; letter-spacing:.10em;
+      color: rgba(210,255,255,.76);
+    }
+    #hdrRight .ico{
+      width:16px; height:16px;
+      border:1px solid rgba(54,246,255,.25);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 0 12px rgba(0,199,255,.08) inset;
+    }
+    #hdrRight .lg{ font-weight:700; opacity:.85; }
+
+    /* ===== PANELS ===== */
+    .panel{
+      position:absolute;
+      background: var(--panel);
+      border:1px solid rgba(54,246,255,.28);
+      box-shadow: 0 0 22px rgba(0,199,255,.10) inset;
+      backdrop-filter: blur(2px);
+    }
+    .panel::before{
+      content:""; position:absolute; inset:8px;
+      border:1px solid rgba(54,246,255,.12);
+      pointer-events:none;
+    }
+    .ticks{
+      position:absolute; left:10px; top:10px; bottom:10px; width:10px;
+      display:flex; flex-direction:column; gap:6px;
+      opacity:.85;
+      pointer-events:none;
+    }
+    .ticks i{
+      height:10px; border-left:3px solid rgba(54,246,255,.65);
+      filter: drop-shadow(0 0 8px rgba(54,246,255,.12));
+    }
+
+    /* ===== VR PANEL (haut gauche) ===== */
+    #vrPanel{
+      left:20px; top:48px; width:290px; height:330px;
+      clip-path: polygon(0 0, 93% 0, 100% 12%, 100% 100%, 0 100%);
+    }
+    #vrFrameTitle{
+      position:absolute; left:18px; top:14px;
+      font-size:10px; letter-spacing:.14em; color:rgba(210,255,255,.72);
+    }
+    #vrSideTicks{
+      position:absolute; left:10px; top:52px; bottom:18px; width:8px;
+      display:flex; flex-direction:column; justify-content:space-between;
+      opacity:.75;
+      pointer-events:none;
+    }
+    #vrSideTicks b{ height:12px; border-left:3px solid rgba(54,246,255,.55); }
+    #vrFeed{
+      position:absolute; left:18px; right:18px; top:34px; bottom:18px;
+      border:1px solid rgba(54,246,255,.18);
+      background: rgba(0,0,0,.22);
+      overflow:hidden;
+    }
+    #vrFeed img{
+      width:100%; height:100%; object-fit:cover;
+      filter: contrast(1.05) saturate(1.05) brightness(.95);
+      opacity:.96;
+    }
+
+    /* ===== CENTER RETICLE ===== */
+    #reticle{
+      position:absolute; left:50%; top:78px;
+      width:320px; height:320px;
+      transform: translateX(-50%);
+      pointer-events:none;
+      filter: drop-shadow(0 0 18px rgba(54,246,255,.18));
+    }
+    .ring{ position:absolute; inset:0; border-radius:50%; border:2px solid rgba(54,246,255,.28); }
+    .ring.r2{ inset:22px; border-color: rgba(54,246,255,.18); }
+    .ring.r3{ inset:58px; border-width:1px; border-color: rgba(54,246,255,.14); }
+    .ring.r4{ inset:92px; border-color: rgba(54,246,255,.22); }
+    .arc{
+      position:absolute; inset:0; border-radius:50%;
+      border:6px solid transparent;
+      border-top-color: rgba(54,246,255,.72);
+      border-right-color: rgba(54,246,255,.22);
+      opacity:.9;
+    }
+    .arc.a2{ inset:22px; border-width:6px; opacity:.7; }
+    .arc.a3{ inset:58px; border-width:5px; opacity:.55; }
+    .spin1{ animation: spin 7.2s linear infinite; }
+    .spin2{ animation: spin 3.6s linear infinite reverse; }
+    .spin3{ animation: spin 11.8s linear infinite; }
+    @keyframes spin{ to{ transform: rotate(360deg);} }
+    #scaleBar{
+      position:absolute; left:50%; top:34px;
+      width:210px; height:70px;
+      transform: translateX(-50%);
+      border-top:10px solid rgba(54,246,255,.72);
+      border-left:10px solid transparent;
+      border-right:10px solid transparent;
+      border-radius: 200px 200px 0 0;
+      filter: drop-shadow(0 0 10px rgba(54,246,255,.18));
+      opacity:.9;
+      clip-path: polygon(10% 0, 90% 0, 100% 50%, 0 50%);
+    }
+
+    /* ===== RIGHT TOP ENV ===== */
+    #envPanel{
+      right:20px; top:68px; width:310px; height:240px;
+      clip-path: polygon(10% 0, 100% 0, 100% 100%, 0 100%, 0 16%);
+    }
+    #envGrid{
+      position:absolute; left:18px; right:18px; top:18px; bottom:18px;
+      display:grid;
+      grid-template-columns: 1fr auto;
+      row-gap:8px; column-gap:10px;
+      font-size:18px;
+    }
+    #envGrid .k{ font-size:16px; color:rgba(210,255,255,.78); }
+    #envGrid .v{ font-size:18px; color:rgba(230,255,255,.95); }
+    #envGrid .v small{ font-size:12px; color:rgba(220,255,255,.65); margin-left:6px; }
+    #envGrid .divider{ grid-column:1/-1; height:1px; background: rgba(54,246,255,.14); margin:2px 0 6px; }
+    #envGrid .subk{ font-size:16px; color:rgba(210,255,255,.72); }
+    #envGrid .subv{ font-size:16px; color:rgba(230,255,255,.92); }
+
+    /* ===== LEFT MID BARS (CPU/RAM/pi temp etc via perf_sys) ===== */
+    #barsPanel{
+      left:40px; top:404px; width:270px; height:250px;
+    }
+    #barsPanel .rows{
+      position:absolute; left:18px; right:18px; top:22px; bottom:18px;
+      display:grid;
+      grid-template-columns: 1fr 160px;
+      row-gap:12px; column-gap:12px;
+      align-content:start;
+    }
+    #barsPanel .lab{ font-size:15px; color: rgba(210,255,255,.80); letter-spacing:.06em; }
+    .hbar{
+      height:10px;
+      border:1px solid rgba(54,246,255,.22);
+      background: rgba(0,0,0,.22);
+      box-shadow: 0 0 12px rgba(0,199,255,.08) inset;
+      position:relative;
+    }
+    .hbar i{
+      position:absolute; left:0; top:0; bottom:0;
+      width:0%;
+      background: linear-gradient(90deg, rgba(54,246,255,.95), rgba(0,199,255,.32));
+      box-shadow: 0 0 14px rgba(54,246,255,.18);
+      transition: width .18s ease;
+    }
+
+    /* ===== RIGHT MID GRAPH + VISION TEXT ===== */
+    #rightMid{
+      right:32px; top:350px; width:300px; height:290px;
+      clip-path: polygon(6% 0, 100% 0, 100% 100%, 0 100%, 0 12%);
+    }
+    #rightMid .graph{
+      position:absolute; left:16px; right:16px; top:16px; height:110px;
+      border:1px solid rgba(54,246,255,.18);
+      background:
+        linear-gradient(0deg, rgba(54,246,255,.06), rgba(0,0,0,.10)),
+        repeating-linear-gradient(90deg, rgba(54,246,255,.10) 0px, rgba(54,246,255,.10) 1px, transparent 1px, transparent 18px),
+        repeating-linear-gradient(0deg, rgba(54,246,255,.08) 0px, rgba(54,246,255,.08) 1px, transparent 1px, transparent 18px);
+      overflow:hidden;
+    }
+    #rightMid .graph svg{ width:100%; height:100%; }
+    #rightMid .t1{ position:absolute; left:20px; top:140px; font-size:20px; color: rgba(210,255,255,.85); }
+    #rightMid .t2{ position:absolute; left:20px; top:178px; font-size:14px; color: rgba(210,255,255,.78); letter-spacing:.08em; }
+    #rightMid .t3{ position:absolute; left:20px; top:202px; font-size:14px; color: rgba(210,255,255,.78); letter-spacing:.08em; }
+
+    /* ===== BOTTOM LEFT ESP32CAM ===== */
+    #espPanel{
+      left:20px; bottom:84px; width:360px; height:250px;
+      clip-path: polygon(0 0, 100% 0, 100% 84%, 94% 100%, 0 100%);
+    }
+    #espPanel .inner{
+      position:absolute; left:16px; right:16px; top:16px; bottom:16px;
+      display:grid;
+      grid-template-columns: 160px 1fr;
+      gap:12px;
+    }
+    #espFeed{
+      border:1px solid rgba(54,246,255,.20);
+      background: rgba(0,0,0,.22);
+      overflow:hidden;
+      position:relative;
+    }
+    #espFeed img{ width:100%; height:100%; object-fit:cover; opacity:.96; filter: contrast(1.05) saturate(1.05) brightness(.98); }
+    #espFeed .cap{
+      position:absolute; left:8px; bottom:8px;
+      font-size:10px; letter-spacing:.14em;
+      color: rgba(220,255,255,.70);
+      background: rgba(0,0,0,.30);
+      border:1px solid rgba(54,246,255,.18);
+      padding:3px 6px;
+    }
+    #espStats{
+      border:1px solid rgba(54,246,255,.18);
+      background: rgba(0,0,0,.16);
+      padding:10px;
+      position:relative;
+    }
+    #espStats .hdr{ font-size:12px; letter-spacing:.14em; color:rgba(210,255,255,.76); margin-bottom:8px; }
+    #espStats .row{
+      display:flex; justify-content:space-between; gap:10px;
+      font-size:12px; color: rgba(220,255,255,.66);
+      border-bottom:1px solid rgba(54,246,255,.10);
+      padding:6px 0;
+    }
+    #espStats .row b{ color: rgba(230,255,255,.92); font-weight:600; }
+    #espStats .miniPills{ position:absolute; right:10px; top:10px; display:flex; gap:6px; }
+    #espStats .miniPills i{ width:12px; height:12px; border:1px solid rgba(54,246,255,.25); background: rgba(0,0,0,.18); }
+
+    /* ===== BOTTOM RIGHT SPECTRUM ===== */
+    #brPanel{
+      right:20px; bottom:84px; width:350px; height:270px;
+      clip-path: polygon(6% 0, 100% 0, 100% 100%, 0 100%, 0 14%);
+    }
+    #brPanel .inner{ position:absolute; left:16px; right:16px; top:16px; bottom:16px; }
+    #pause{
+      position:absolute; right:28px; top:26px;
+      width:54px; height:54px; border-radius:50%;
+      border:1px solid rgba(54,246,255,.30);
+      background: rgba(0,0,0,.20);
+      box-shadow: 0 0 18px rgba(0,199,255,.10) inset;
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer;
+    }
+    #pause i{ width:18px; height:22px; border-left:4px solid rgba(54,246,255,.75); border-right:4px solid rgba(54,246,255,.75); }
+    #specGrid{
+      position:absolute; left:16px; right:16px; bottom:16px; top:64px;
+      border:1px solid rgba(54,246,255,.18);
+      background:
+        linear-gradient(0deg, rgba(54,246,255,.06), rgba(0,0,0,.10)),
+        repeating-linear-gradient(90deg, rgba(54,246,255,.10) 0px, rgba(54,246,255,.10) 1px, transparent 1px, transparent 18px),
+        repeating-linear-gradient(0deg, rgba(54,246,255,.08) 0px, rgba(54,246,255,.08) 1px, transparent 1px, transparent 18px);
+      overflow:hidden;
+      padding:10px 10px 14px;
+    }
+    #specBars{
+      position:absolute; left:10px; right:10px; bottom:12px; top:12px;
+      display:flex; align-items:flex-end; gap:8px;
+    }
+    #specBars b{
+      flex:1;
+      background: linear-gradient(180deg, rgba(54,246,255,.95), rgba(0,199,255,.22));
+      box-shadow: 0 0 16px rgba(54,246,255,.14);
+      height:40%;
+      transition: height .18s ease;
+    }
+    #specBars b.r{
+      background: linear-gradient(180deg, rgba(255,43,43,.95), rgba(255,43,43,.22));
+      box-shadow: 0 0 16px rgba(255,43,43,.12);
+    }
+
+    /* ===== CENTER BOTTOM LABEL + DANGER ===== */
+    #centerLabel{
+      position:absolute; left:50%; bottom:146px;
+      transform: translateX(-50%);
+      width:360px; height:40px;
+      border:1px solid rgba(54,246,255,.22);
+      background: rgba(0,0,0,.16);
+      clip-path: polygon(10% 0, 90% 0, 100% 50%, 90% 100%, 10% 100%, 0 50%);
+      box-shadow: 0 0 20px rgba(0,199,255,.10) inset;
+      display:flex; align-items:center; justify-content:center;
+      font-size:13px; letter-spacing:.16em;
+      color: rgba(220,255,255,.74);
+    }
+
+    /* ton ancien #danger était display none/block => on conserve la logique mais en style reference */
+    #danger{
+      position:absolute; left:50%; bottom:78px;
+      transform: translateX(-50%);
+      text-align:center;
+      letter-spacing:.14em;
+      text-transform:uppercase;
+      color: rgba(255,43,43,.92);
+      text-shadow: 0 0 12px rgba(255,43,43,.20);
+      font-size:18px;
+      display:none; /* important: contrôlé par logique obs/dist */
+      pointer-events:none;
+    }
+    #danger small{ display:block; font-size:16px; margin-top:8px; opacity:.90; }
+
+    /* ===== RED TARGET BRACKETS (center) ===== */
+    #redTarget{
+      position:absolute; left:50%; top:57%;
+      transform: translate(-50%,-50%);
+      width:320px; height:180px;
+      pointer-events:none;
+      opacity:.95;
+    }
+    .rb{
+      position:absolute; width:18px; height:18px;
+      border:2px solid rgba(255,43,43,.78);
+      box-shadow: 0 0 16px rgba(255,43,43,.14);
+    }
+    .rb.tl{ left:-2px; top:-2px; border-right:none; border-bottom:none; }
+    .rb.tr{ right:-2px; top:-2px; border-left:none; border-bottom:none; }
+    .rb.bl{ left:-2px; bottom:-2px; border-right:none; border-top:none; }
+    .rb.br{ right:-2px; bottom:-2px; border-left:none; border-top:none; }
+
+    /* ===== JOYSTICK ===== */
+    #joy {
+      position: absolute;
+      left: 420px;       /* Décalé vers la droite pour laisser la place au panel ESP */
+      bottom: 84px;      /* Aligné sur le bas des autres panels */
+      width: 140px; height: 140px;
+      border-radius: 50%;
+      border: 2px solid rgba(54,246,255,.65);
+      box-shadow: 0 0 18px rgba(54,246,255,.14);
+      background: rgba(0,0,0,.18);
+      display: block;
+      pointer-events: auto;
+      z-index: 10;
+    }
+    #joyDot{
+      position:absolute; left:50%; top:50%;
+      width:10px; height:10px;
+      margin-left:-5px; margin-top:-5px;
+      border-radius:50%;
+      background: rgba(240,255,255,.92);
+      box-shadow: 0 0 14px rgba(54,246,255,.18);
+    }
+    #joyLabel{
+      position:absolute; left:50%; top:100%;
+      transform: translate(-50%, 10px);
+      font-size:11px; letter-spacing:.12em;
+      color: rgba(220,255,255,.70);
+      background: rgba(0,0,0,.30);
+      border:1px solid rgba(54,246,255,.18);
+      padding:4px 8px;
+      white-space:nowrap;
+    }
+
+    /* ===== MOVING SCANLINE ===== */
+    #scanline{
+      position:absolute; left:0; right:0; height:2px;
+      background: linear-gradient(90deg, transparent, rgba(54,246,255,.92), transparent);
+      opacity:.55;
+      box-shadow: 0 0 18px rgba(54,246,255,.22);
+      mix-blend-mode:screen;
+      animation: scan 2.8s linear infinite;
+      pointer-events:none;
+    }
+    @keyframes scan{
+      0%{ top:15%; }
+      50%{ top:84%; }
+      100%{ top:15%; }
+    }
+
+    /* responsive */
+    @media (max-width: 1100px){
+      #vrPanel{ transform: scale(.92); transform-origin: top left; }
+      #envPanel{ transform: scale(.92); transform-origin: top right; }
+      #rightMid{ transform: scale(.92); transform-origin: top right; }
+      #barsPanel{ transform: scale(.92); transform-origin: top left; }
+      #espPanel{ transform: scale(.92); transform-origin: bottom left; }
+      #brPanel{ transform: scale(.92); transform-origin: bottom right; }
+      #reticle{ transform: translateX(-50%) scale(.90); transform-origin: top center; }
+      #joy{ transform: translate(-50%,-50%) scale(.9); }
+    }
+  </style>
+</head>
+
+    <body>
+      <div id="bg">
+    <img src="/video_feed" alt="S.H.O.S Video Stream"></div>
+    <div id="noise"></div>
+
+    <div id="hud">
+      <!--div id="scanline"></div-->
+
+      <div id="outer"></div>
+      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+      <div class="ear left"></div><div class="ear right"></div>
+
+      <div id="hdrLeft" class="glow">S.MOS SYSTEM V1.0</div>
+      <div id="profile-name">MODE: {{ profile.name }}</div>
+      <div id="hdrRight">
+        <div class="ico"></div><div class="ico"></div><div class="ico"></div>
+        <div class="lg glow">LQ</div>
+      </div>
+
+      <!-- VR PANEL -->
+      <div id="vrPanel" class="panel">
+        <div class="ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div id="vrFrameTitle" class="glow">VR HEADSET VIEW</div>
+        <div id="vrSideTicks" aria-hidden="true"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></div>
+        <div id="vrFeed">
+          <!-- URL configurable en JS (snapshot refresh). Si vide => placeholder -->
+          <img id="vrImg" alt="vr_feed"
+               src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='480'%3E%3Crect width='640' height='480' fill='%23000'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2336f6ff' font-family='monospace' font-size='22'%3EVR FEED%3C/text%3E%3C/svg%3E">
+        </div>
+      </div>
+
+      <!-- RETICLE -->
+      <div id="reticle" aria-hidden="true">
+        <div id="scaleBar"></div>
+        <div class="ring spin1"></div>
+        <div class="ring r2 spin2"></div>
+        <div class="ring r3 spin3"></div>
+        <div class="ring r4 spin2"></div>
+        <div class="arc spin2" style="transform: rotate(22deg);"></div>
+        <div class="arc a2 spin1" style="transform: rotate(190deg);"></div>
+        <div class="arc a3 spin3" style="transform: rotate(40deg);"></div>
+        <div class="ring r3" style="inset:122px; border-color: rgba(54,246,255,.22);"></div>
+        <div class="ring r3" style="inset:142px; border-color: rgba(54,246,255,.18);"></div>
+      </div>
+
+      <!-- RIGHT TOP ENV (utilise data.sensors.temp_ext & data.sensors.gas + GPS factice) -->
+      <div id="envPanel" class="panel">
+        <div class="ticks" aria-hidden="true" style="left:auto; right:10px;"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div id="envGrid">
+          <div class="k glow">TEMP :</div><div class="v glow"><span id="tempVal">0.0</span><small>°C</small></div>
+          <div class="k glow">GAZ&nbsp;&nbsp;:</div><div class="v glow"><span id="gazVal">0</span><small>°C</small></div>
+          <!--div class="k glow">GAZ&nbsp;&nbsp;:</div><div class="v glow"><span id="gazPpmVal">0</span><small>PPM</small></div-->
+          <div class="k glow">MIDS :</div><div class="v glow"><span id="midsVal">----</span></div>
+          <div class="divider"></div>
+          <div class="subk glow">GPS</div><div class="subv glow" id="gpsDir">INDE&nbsp;&nbsp;E</div>
+          <div class="subk glow">LAT :</div><div class="subv glow"><span id="latVal">48.85</span>,&nbsp;&nbsp;<span id="lonVal">2.35</span></div>
+        </div>
+      </div>
+
+      <!-- LEFT BARS PANEL (perf_sys cpu/ram/pi_temp + wifi/lum/hum => recyclés) -->
+      <div id="barsPanel" class="panel">
+        <div class="ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="rows">
+          <div class="lab glow">BATTERIE</div><div class="hbar"><i id="batBar"></i></div>
+          <div class="lab glow">WIFI</div><div class="hbar"><i id="wifiBar"></i></div>
+          <div class="lab glow">CPU</div><div class="hbar"><i id="cpuBar"></i></div>
+          <div class="lab glow">RAM</div><div class="hbar"><i id="ramBar"></i></div>
+          <div class="lab glow">PI TEMP</div><div class="hbar"><i id="piTempBar"></i></div>
+          <div class="lab glow">LUM</div><div class="hbar"><i id="lumBar"></i></div>
+        </div>
+      </div>
+
+      <!-- RIGHT MID (graph + text: on mappe HUM/DIST/TIME) -->
+      <div id="rightMid" class="panel">
+        <div class="ticks" aria-hidden="true" style="left:auto; right:10px;"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="graph">
+          <svg viewBox="0 0 100 40" preserveAspectRatio="none">
+            <polyline id="line1" fill="none" stroke="rgba(54,246,255,.9)" stroke-width="1.5" points=""></polyline>
+            <polyline id="line2" fill="none" stroke="rgba(54,246,255,.55)" stroke-width="1.2" points=""></polyline>
+          </svg>
+        </div>
+        <div class="t1 glow">TEMPÉRATURE CRTINS</div>
+        <div class="t2 glow">VISION&nbsp;&nbsp;<span id="visionLbl">PEASONE</span></div>
+        <div class="t3 glow">REBAcert&nbsp;&nbsp;<span id="rebaLbl">CRMONE</span></div>
+      </div>
+
+      <!-- BOTTOM LEFT (ESP32-CAM feed) -->
+      <div id="espPanel" class="panel">
+        <div class="ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="inner">
+          <div id="espFeed">
+            <img id="espImg" alt="esp32cam_feed"
+                 src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='480'%3E%3Crect width='640' height='480' fill='%23000'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%2336f6ff' font-family='monospace' font-size='22'%3EESP32-CAM%3C/text%3E%3C/svg%3E">
+            <div class="cap glow">ESP32CAM / LIVE</div>
+          </div>
+
+          <div id="espStats">
+            <div class="miniPills" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="hdr glow">RDI GLF8OOAHS</div>
+            <div class="row"><span>DIST</span> <b id="sDist">0 cm</b></div>
+            <div class="row"><span>TIME</span> <b id="sTime">00:00</b></div>
+            <div class="row"><span>HUM</span>  <b id="sHum">0%</b></div>
+            <!--div class="row"><span>GAS</span>  <b id="sGas">0</b></div-->
+            <div class="row"><span>LUM</span>  <b id="sLum">--</b></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BOTTOM RIGHT (spectrum) -->
+      <div id="brPanel" class="panel">
+        <div class="ticks" aria-hidden="true" style="left:auto; right:10px;"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="inner">
+          <div id="pause" title="pause"><i></i></div>
+          <div id="specGrid">
+            <div id="specBars" aria-label="spectrum bars">
+              <b style="height:44%"></b>
+              <b style="height:60%"></b>
+              <b style="height:52%"></b>
+              <b style="height:68%"></b>
+              <b style="height:46%"></b>
+              <b style="height:78%"></b>
+              <b class="r" style="height:64%"></b>
+              <b class="r" style="height:82%"></b>
+              <b style="height:58%"></b>
+              <b style="height:74%"></b>
+            </div>
+          </div>
+        </div>
+      </div>
+
+<!--div id="module-panel" class="panel">
+    <h3>SYSTEM MODULES</h3>
+    <div class="module-item">
+        <span>NIGHT VISION</span>
+        <button onclick="toggleModule('night_vision')">ACTIVATE</button>
+    </div>
+    <div class="module-item">
+        <span>OBJECT SCAN</span>
+        <button onclick="toggleModule('object_scan')">ACTIVATE</button>
+    </div>
+</div-->
+
+      <!-- CENTER BOTTOM LABEL -->
+      <div id="centerLabel" class="glow">RAGE WEIGHT CRTIOR</div>
+
+      <!-- DANGER: on conserve TA logique (obs==0 ou dist<20) -->
+      <div id="danger">
+        <div id="dangerTop">! COLLISION DETECTED !</div>
+        <small id="dangerBot">DANGER CALRTION</small>
+      </div>
+
+      <!-- Center red brackets (visuel) -->
+      <div id="redTarget" aria-hidden="true">
+        <div class="rb tl"></div><div class="rb tr"></div><div class="rb bl"></div><div class="rb br"></div>
+      </div>
+
+      <!-- JOYSTICK widget -->
+      <div id="joy" aria-label="joystick">
+        <div id="joyDot"></div>
+        <div id="joyLabel" class="glow">JOYSTICK: <span id="joyXY">0.00, 0.00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONSERVE TON SOCKET.IO -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+ <script>
+    const socket = io(); 
+    const $ = (id) => document.getElementById(id);
+
+    // --- 1. RECEPTION DES DONNÉES CAPTEURS (ARDUINO via MQTT) ---
+    socket.on('sensor_update', (s) => {
+        if (!s) return;
+        console.log("Données Arduino reçues:", s); // Debug console F12
+
+        // Panel Environnement (Haut Droite)
+        if ($('tempVal')) $('tempVal').innerText = s.temp_ext !== undefined ? s.temp_ext : "0.0";
+        if ($('gazVal')) $('gazVal').innerText = s.gas || "0";
+        if ($('gazPpmVal')) $('gazPpmVal').innerText = s.gas || "0";
+        
+        // Panel ESP32 / Stats (Bas Gauche)
+        if ($('sDist')) $('sDist').innerText = (s.dist !== undefined ? s.dist : "--") + " cm";
+        if ($('sTime')) $('sTime').innerText = s.time || "00:00";
+        if ($('sHum')) $('sHum').innerText = (s.hum || 0) + "%";
+        if ($('sGas')) $('sGas').innerText = s.gas || "0";
+        if ($('sLum')) $('sLum').innerText = (s.lum == 1) ? "SOMBRE" : "OK";
+
+        // Joystick (Conversion 0-1023 vers -1.0 / 1.0)
+        if (s.joy_x !== undefined && s.joy_y !== undefined) {
+            let jX = (s.joy_x - 512) / 512;
+            let jY = (s.joy_y - 512) / 512;
+            joySetNormalized(jX, jY);
+        }
+
+        // Alerte Danger (Collision)
+        if ($('danger')) {
+            if (s.obs == 0 || (s.dist > 0 && s.dist < 20)) {
+                $('danger').style.display = "block";
+            } else {
+                $('danger').style.display = "none";
+            }
+        }
+        
+        // Animation Spectrum basée sur le son
+        if (s.son > 10) animateSpectrum(s.son);
+    });
+
+    // --- 2. RECEPTION DES PERFORMANCES SYSTÈME (RASPBERRY PI) ---
+    socket.on('sys_update', (p) => {
+        if (!p) return;
+
+        // Mise à jour des barres (Milieu Gauche)
+        setBar($('cpuBar'), p.cpu);
+        setBar($('ramBar'), p.ram);
+        setBar($('piTempBar'), (p.temp / 80) * 100); 
+        
+        // Valeurs additionnelles
+        setBar($('batBar'), p.bat || 85); 
+        setBar($('wifiBar'), p.wifi || 90);
+        
+        // Affichage texte température RPi
+        if ($('rpi-temp')) $('rpi-temp').innerText = Math.round(p.temp) + "°C";
+    });
+
+    // --- 3. FONCTIONS UTILITAIRES ---
+
+    function setBar(el, pct) {
+        if (!el) return;
+        // Correction : Si l'ID est sur le <i>, on l'utilise directement, sinon on cherche le <i> enfant
+        const fill = (el.tagName === 'I') ? el : el.querySelector('i');
+        if (fill) {
+            fill.style.width = Math.min(100, Math.max(0, pct)) + '%';
+        }
+    }
+
+    function joySetNormalized(nx, ny) {
+        const joyEl = $('joy');
+        if (!joyEl) return;
+        const r = joyEl.getBoundingClientRect();
+        const maxR = r.width / 2 - 15;
+        const px = nx * maxR;
+        const py = ny * maxR;
+        if ($('joyDot')) {
+            $('joyDot').style.transform = `translate(${px}px, ${py}px)`;
+        }
+        if ($('joyXY')) $('joyXY').textContent = `${nx.toFixed(2)}, ${ny.toFixed(2)}`;
+    }
+
+    function animateSpectrum(val) {
+        const bars = document.querySelectorAll('#specBars b');
+        bars.forEach(bar => {
+            if (!spectrumPaused) {
+                let h = Math.random() * (val / 5); 
+                bar.style.height = Math.min(100, h + 10) + '%';
+            }
+        });
+    }
+
+    // Gestion du bouton Pause
+    let spectrumPaused = false;
+    if ($('pause')) {
+        $('pause').addEventListener('click', () => {
+            spectrumPaused = !spectrumPaused;
+            $('pause').style.opacity = spectrumPaused ? .4 : 1;
+        });
+    }
+
+    // Gestion des Modules
+    function toggleModule(name) {
+        const btn = event.target;
+        const isActivating = btn.innerText === "ACTIVATE";
+        
+        socket.emit('toggle_module', {
+            name: name,
+            action: isActivating ? 'start' : 'stop'
+        });
+
+        btn.innerText = isActivating ? "DEACTIVATE" : "ACTIVATE";
+        btn.style.color = isActivating ? "#ff3636" : "#36f6ff";
+    }
+
+    // Rafraîchissement des flux images (simulé ou snapshot)
+    setInterval(() => {
+        const timestamp = new Date().getTime();
+        if ($('vrImg') && !$('vrImg').src.includes('data:')) {
+            $('vrImg').src = "/vr_feed_snapshot?t=" + timestamp;
+        }
+        if ($('espImg') && !$('espImg').src.includes('data:')) {
+            $('espImg').src = "/esp_feed_snapshot?t=" + timestamp;
+        }
+    }, 3000);
+
+</script>
+</body>
+</html>
