@@ -1,0 +1,123 @@
+name: "Gemini Code Review"
+
+# Quand cette action doit-elle s'exécuter ?
+on:
+  # Déclenchement sur les pull requests
+  pull_request:
+    types:
+      - opened          # Quand une PR est ouverte
+      - synchronize     # Quand de nouveaux commits sont poussés
+      - ready_for_review # Quand une PR draft passe en "prête pour review"
+  
+  # Déclenchement manuel via commentaire (optionnel)
+  issue_comment:
+    types: [created]
+
+# Permissions nécessaires pour que l'action puisse commenter sur la PR
+permissions:
+  contents: read        # Lire le contenu du dépôt
+  pull-requests: write  # Écrire des commentaires sur les PR
+
+jobs:
+  # Job principal pour la review automatique
+  auto-review:
+    runs-on: ubuntu-latest
+    # Ne pas s'exécuter si la PR est en draft (sauf si prête)
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Récupère tout l'historique pour le contexte
+      
+      - name: Review automatique par Gemini
+        uses: petarzarkov/gemini-code-review-action@v1
+        with:
+          # Modèle Gemini (lite = plus rapide et économique)
+          model: gemini-2.0-flash-lite
+          
+          # Dossiers/fichiers à ignorer
+          exclude: |
+            *.md
+            *.txt
+            *.json
+            *.yaml
+            *.yml
+            package-lock.json
+            requirements.txt
+            docs/*
+            tests/*
+            assets/*
+          
+          # Ne pas commenter les fichiers déjà ignorés
+          exclude_patterns: |
+            **/*.md
+            **/test/**
+            **/docs/**
+          
+          # Langue des commentaires
+          language: French
+          
+          # Contexte des conversations précédentes
+          enable_conversation_context: true
+          
+          # Sévérité des commentaires (info, warn, error)
+          min_severity: warn
+          
+          # Ne pas review les fichiers trop gros
+          max_file_size: 50000
+      
+      - name: Nettoyage des anciens commentaires (optionnel)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Supprime les anciens commentaires de Gemini pour éviter le spam
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+            
+            const botComments = comments.filter(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🤖 AI CODE REVIEW 🤖')
+            );
+            
+            if (botComments.length > 3) {
+              for (let i = 0; i < botComments.length - 2; i++) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComments[i].id
+                });
+              }
+            }
+
+  # Job pour le déclenchement manuel via commentaire "/review"
+  manual-review:
+    runs-on: ubuntu-latest
+    # Ne s'exécute que sur un commentaire contenant "/review"
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/review')
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.issue.pull_request.head.ref }}
+      
+      - name: Review manuelle par Gemini
+        uses: petarzarkov/gemini-code-review-action@v1
+        with:
+          model: gemini-2.0-flash-lite
+          exclude: |
+            *.md
+            *.json
+            *.yaml
+            tests/*
+          language: French
+          enable_conversation_context: true
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
